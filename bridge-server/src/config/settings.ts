@@ -172,6 +172,18 @@ function resolveEnvVarsInObject<T>(obj: T): T {
   return obj;
 }
 
+function normalizeAuthCompatibility(input: Settings): Settings {
+  const out: Settings = { ...input };
+  const anyInput: any = input as any;
+  if (out.selectedAuthType === undefined) {
+    const maybe = anyInput?.security?.auth?.selectedType;
+    if (typeof maybe === 'string') {
+      out.selectedAuthType = maybe as AuthType;
+    }
+  }
+  return out;
+}
+
 /**
  * Loads settings from user and workspace directories.
  * Project settings override user settings.
@@ -188,7 +200,8 @@ export function loadSettings(workspaceDir: string): LoadedSettings {
       const parsedUserSettings = JSON.parse(
         stripJsonComments(userContent),
       ) as Settings;
-      userSettings = resolveEnvVarsInObject(parsedUserSettings);
+      const normalizedUser = normalizeAuthCompatibility(parsedUserSettings);
+      userSettings = resolveEnvVarsInObject(normalizedUser);
     }
   } catch (error: unknown) {
     settingsErrors.push({
@@ -210,7 +223,10 @@ export function loadSettings(workspaceDir: string): LoadedSettings {
       const parsedWorkspaceSettings = JSON.parse(
         stripJsonComments(projectContent),
       ) as Settings;
-      workspaceSettings = resolveEnvVarsInObject(parsedWorkspaceSettings);
+      const normalizedWorkspace = normalizeAuthCompatibility(
+        parsedWorkspaceSettings,
+      );
+      workspaceSettings = resolveEnvVarsInObject(normalizedWorkspace);
     }
   } catch (error: unknown) {
     settingsErrors.push({

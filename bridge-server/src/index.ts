@@ -29,6 +29,17 @@ import { hideBin } from 'yargs/helpers';
 import path from 'path';
 import readline from 'readline';
 
+function normalizeAuthType(value: unknown): AuthType | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const values = Object.values(AuthType);
+  return values.includes(value as AuthType)
+    ? (value as AuthType)
+    : undefined;
+}
+
 function mergeMcpServers(
   settings: Settings,
   extensions: Extension[],
@@ -196,7 +207,20 @@ async function startMcpServer() {
   );
 
   // REFACTORED: Authentication logic with improved verbosity and error handling.
-  let selectedAuthType = settings.merged.selectedAuthType;
+  const nestedAuthType = normalizeAuthType(
+    (settings.merged as any)?.security?.auth?.selectedType,
+  );
+
+  // Backward/forward compatibility: accept both legacy top-level
+  // selectedAuthType and the new nested security.auth.selectedType
+  let selectedAuthType = normalizeAuthType(settings.merged.selectedAuthType);
+
+  if (!selectedAuthType && nestedAuthType) {
+    selectedAuthType = nestedAuthType;
+    logger.info(
+      'Detected authentication type from settings.security.auth.selectedType.',
+    );
+  }
   let authReason = '';
 
   if (selectedAuthType) {
@@ -205,6 +229,13 @@ async function startMcpServer() {
     selectedAuthType = AuthType.USE_GEMINI;
     authReason = ' (fallback to GEMINI_API_KEY environment variable)';
   } else {
+    logger.warn(
+      'Authentication not detected in settings.json. Keys present:',
+      {
+        hasSelectedAuthType: Boolean(settings.merged.selectedAuthType),
+        nestedAuthType: nestedAuthType ?? null,
+      },
+    );
     // NEW: More descriptive error message for missing auth.
     logger.error(
       'Authentication missing: Please complete the authentication setup in gemini-cli first, or set the GEMINI_API_KEY environment variable.\n' +
