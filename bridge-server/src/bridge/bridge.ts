@@ -4,12 +4,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import {
   type Config,
-  type Tool as GcliTool,
+  type AnyDeclarativeTool as GcliTool,
   type ToolResult,
   GeminiChat,
   WebFetchTool,
   WebSearchTool,
   DiscoveredMCPTool,
+  StreamEventType,
 } from '@google/gemini-cli-core';
 import {
   type CallToolResult,
@@ -421,7 +422,7 @@ export class GcliMcpBridge {
         logger.info('MCP tool call started', { toolName: tool.name, args });
         try {
           // toolInstanceForExecution is either the original tool or a new instance with a custom model config.
-          const result = await toolInstanceForExecution.execute(
+          const result = await toolInstanceForExecution.buildAndExecute(
             args,
             extra.signal,
           );

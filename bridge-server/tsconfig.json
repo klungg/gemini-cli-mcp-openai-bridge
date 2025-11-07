@@ -9,10 +9,10 @@
     ],
     "references": [
         {
-            "path": "../core"
+            "path": "../gemini-cli/packages/core"
         },
         {
-            "path": "../cli"
+            "path": "../gemini-cli/packages/cli"
         }
     ]
 }

@@ -10,11 +10,17 @@ import {
   setGeminiMdFilename as setServerGeminiMdFilename,
   getCurrentGeminiMdFilename,
   ApprovalMode,
-  GEMINI_CONFIG_DIR as GEMINI_DIR,
   DEFAULT_GEMINI_FLASH_MODEL,
   DEFAULT_GEMINI_EMBEDDING_MODEL,
   FileDiscoveryService,
   TelemetryTarget,
+  SimpleExtensionLoader,
+  DEFAULT_FILE_FILTERING_OPTIONS,
+  DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
+} from '@google/gemini-cli-core';
+import type {
+  FileFilteringOptions,
+  GeminiCLIExtension,
 } from '@google/gemini-cli-core';
 import { Settings } from './settings.js';
 
@@ -24,6 +30,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { loadSandboxConfig } from './sandboxConfig.js';
+
+const GEMINI_DIR = '.gemini';
 
 // Simple console logger for now - replace with actual logger if available
 const logger = {
@@ -40,22 +48,29 @@ const logger = {
 // TODO: Consider if App.tsx should get memory via a server call or if Config should refresh itself.
 export async function loadHierarchicalGeminiMemory(
   currentWorkingDirectory: string,
+  includeDirectoriesToReadGemini: readonly string[],
   debugMode: boolean,
   fileService: FileDiscoveryService,
-  extensionContextFilePaths: string[] = [],
-): Promise<{ memoryContent: string; fileCount: number }> {
+  extensionLoader: SimpleExtensionLoader,
+  folderTrust: boolean,
+  memoryImportFormat: 'flat' | 'tree',
+  fileFilteringOptions: FileFilteringOptions,
+): Promise<{ memoryContent: string; fileCount: number; filePaths: string[] }> {
   if (debugMode) {
     logger.debug(
-      `CLI: Delegating hierarchical memory load to server for CWD: ${currentWorkingDirectory}`,
+      `CLI: Delegating hierarchical memory load to server for CWD: ${currentWorkingDirectory} (memoryImportFormat: ${memoryImportFormat})`,
     );
   }
-  // Directly call the server function.
-  // The server function will use its own homedir() for the global path.
+
   return loadServerHierarchicalMemory(
     currentWorkingDirectory,
+    includeDirectoriesToReadGemini,
     debugMode,
     fileService,
-    extensionContextFilePaths,
+    extensionLoader,
+    folderTrust,
+    memoryImportFormat,
+    fileFilteringOptions,
   );
 }
 
@@ -83,22 +98,40 @@ export async function loadServerConfig(
 
   const resolvedTargetDir = targetDir || process.cwd();
 
-  const extensionContextFilePaths = extensions.flatMap((e) => e.contextFiles);
+  const geminiExtensions = toGeminiExtensions(extensions);
+  const extensionLoader = new SimpleExtensionLoader(geminiExtensions);
+  const includeDirectories: string[] = [];
+  const folderTrust = true;
+  const trustedFolder = true;
+  const memoryImportFormat: 'flat' | 'tree' = 'tree';
+
+  const memoryFileFiltering: FileFilteringOptions = {
+    respectGitIgnore:
+      settings.fileFiltering?.respectGitIgnore ??
+      DEFAULT_MEMORY_FILE_FILTERING_OPTIONS.respectGitIgnore,
+    respectGeminiIgnore: DEFAULT_MEMORY_FILE_FILTERING_OPTIONS.respectGeminiIgnore,
+  };
 
   const fileService = new FileDiscoveryService(resolvedTargetDir);
   // Call the (now wrapper) loadHierarchicalGeminiMemory which calls the server's version
   let memoryContent = '';
   let fileCount = 0;
+  let memoryFilePaths: string[] = [];
 
   if (loadInternalPrompt) {
     const memoryResult = await loadHierarchicalGeminiMemory(
       resolvedTargetDir,
+      includeDirectories,
       debugMode,
       fileService,
-      extensionContextFilePaths,
+      extensionLoader,
+      folderTrust,
+      memoryImportFormat,
+      memoryFileFiltering,
     );
     memoryContent = memoryResult.memoryContent;
     fileCount = memoryResult.fileCount;
+    memoryFilePaths = memoryResult.filePaths;
   }
 
   const mcpServers = mergeMcpServers(settings, extensions);
@@ -117,9 +150,9 @@ export async function loadServerConfig(
     embeddingModel: DEFAULT_GEMINI_EMBEDDING_MODEL,
     sandbox: sandboxConfig,
     targetDir: resolvedTargetDir,
+    includeDirectories,
+    loadMemoryFromIncludeDirectories: false,
     debugMode,
-    question: undefined,
-    fullContext: false,
     coreTools: settings.coreTools || undefined,
     excludeTools: settings.excludeTools || undefined,
     toolDiscoveryCommand: settings.toolDiscoveryCommand,
@@ -128,6 +161,7 @@ export async function loadServerConfig(
     mcpServers,
     userMemory: memoryContent,
     geminiMdFileCount: fileCount,
+    geminiMdFilePaths: memoryFilePaths,
     approvalMode: ApprovalMode.YOLO,
     showMemoryUsage: settings.showMemoryUsage || false,
     accessibility: settings.accessibility,
@@ -143,6 +177,7 @@ export async function loadServerConfig(
     // Git-aware file filtering settings
     fileFiltering: {
       respectGitIgnore: settings.fileFiltering?.respectGitIgnore,
+      respectGeminiIgnore: DEFAULT_FILE_FILTERING_OPTIONS.respectGeminiIgnore,
       enableRecursiveFileSearch:
         settings.fileFiltering?.enableRecursiveFileSearch,
     },
@@ -156,7 +191,10 @@ export async function loadServerConfig(
     fileDiscoveryService: fileService,
     bugCommand: settings.bugCommand,
     model: model, // <-- Use the new model selection logic
-    extensionContextFilePaths,
+    extensionLoader,
+    folderTrust,
+    trustedFolder,
+    useRipgrep: true,
   });
 }
 
@@ -176,6 +214,19 @@ function mergeMcpServers(settings: Settings, extensions: Extension[]) {
     );
   }
   return mcpServers;
+}
+
+function toGeminiExtensions(extensions: Extension[]): GeminiCLIExtension[] {
+  return extensions.map((extension, index) => ({
+    name: extension.config.name,
+    version: extension.config.version,
+    isActive: true,
+    path: extension.rootDir,
+    contextFiles: extension.contextFiles,
+    mcpServers: extension.config.mcpServers,
+    excludeTools: [],
+    id: `${extension.config.name}-${index}`,
+  }));
 }
 function findEnvFile(startDir: string): string | null {
   let currentDir = path.resolve(startDir);

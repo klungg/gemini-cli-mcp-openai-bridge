@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { type Config, GeminiChat } from '@google/gemini-cli-core';
+import { type Config, GeminiChat, StreamEventType } from '@google/gemini-cli-core';
 import {
   type Content,
   type Part,
@@ -60,12 +60,10 @@ function sanitizeGeminiSchema(schema: any): any {
 
 export class GeminiApiClient {
   private readonly config: Config;
-  private readonly contentGenerator;
   private readonly debugMode: boolean;
 
   constructor(config: Config, debugMode = false) {
     this.config = config;
-    this.contentGenerator = this.config.getGeminiClient().getContentGenerator();
     this.debugMode = debugMode;
   }
 
@@ -270,12 +268,7 @@ export class GeminiApiClient {
     }
 
     // Create a new, isolated chat session for each request.
-    const oneShotChat = new GeminiChat(
-      this.config,
-      this.contentGenerator,
-      {},
-      history,
-    );
+    const oneShotChat = new GeminiChat(this.config, {}, history);
 
     const geminiTools = this.convertOpenAIToolsToGemini(tools);
 
@@ -300,21 +293,29 @@ export class GeminiApiClient {
       };
     }
 
-    
     const prompt_id = Math.random().toString(16).slice(2);
-    const geminiStream = await oneShotChat.sendMessageStream({
-      message: lastMessage.parts || [],
-      config: {
-        tools: geminiTools,
-        ...generationConfig,
+    const geminiStream = await oneShotChat.sendMessageStream(
+      model,
+      {
+        message: lastMessage.parts || [],
+        config: {
+          tools: geminiTools,
+          ...generationConfig,
+        },
       },
-    }, prompt_id);
+      prompt_id,
+    );
 
     logger.debug(this.debugMode, 'Got stream from Gemini.');
 
     // Transform the event stream to a simpler StreamChunk stream
     return (async function* (): AsyncGenerator<StreamChunk> {
-      for await (const response of geminiStream) {
+      for await (const event of geminiStream) {
+        if (event.type !== StreamEventType.CHUNK) {
+          continue;
+        }
+
+        const response = event.value;
         const parts = response.candidates?.[0]?.content?.parts || [];
         for (const part of parts) {
           if (part.text) {

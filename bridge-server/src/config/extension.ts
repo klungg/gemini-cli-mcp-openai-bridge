@@ -15,6 +15,7 @@ export const EXTENSIONS_CONFIG_FILENAME = 'gemini-extension.json';
 export interface Extension {
   config: ExtensionConfig;
   contextFiles: string[];
+  rootDir: string;
 }
 
 export interface ExtensionConfig {
@@ -96,6 +97,7 @@ function loadExtension(extensionDir: string): Extension | null {
     return {
       config,
       contextFiles,
+      rootDir: extensionDir,
     };
   } catch (e) {
     console.error(
